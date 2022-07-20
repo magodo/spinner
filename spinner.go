@@ -1,7 +1,6 @@
 package spinner
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -20,14 +19,10 @@ func (m *Messager) SetDetail(v string) {
 	m.detailCh <- v
 }
 
-// UserFunc executes with spinner running. Users are expected to periodically check the context to see whether it is terminated, which might due to one of the following reasons:
-// - Context deadline execeeded (if any)
-// - User pressed "Ctrl-C" to interrupt
-type UserFunc func(ctx context.Context, msg Messager) error
+// UserFunc executes with spinner running.
+type UserFunc func(msg Messager) error
 
-func Run(sp spinner.Model, f UserFunc) error {
-	ctx, cancel := context.WithCancel(context.Background())
-
+func Run(sp spinner.Model, f UserFunc, opts ...tea.ProgramOption) error {
 	statusCh := make(chan string, 1)
 	detailCh := make(chan string, 1)
 	msg := Messager{
@@ -38,8 +33,7 @@ func Run(sp spinner.Model, f UserFunc) error {
 	doneCh := make(chan any)
 	var result error
 	go func() {
-		result = f(ctx, msg)
-		cancel()
+		result = f(msg)
 		close(statusCh)
 		close(detailCh)
 		close(doneCh)
@@ -48,11 +42,9 @@ func Run(sp spinner.Model, f UserFunc) error {
 		m:        sp,
 		statusCh: statusCh,
 		detailCh: detailCh,
-		ctx:      ctx,
-		cancel:   cancel,
 		doneCh:   doneCh,
 	}
-	if err := tea.NewProgram(s).Start(); err != nil {
+	if err := tea.NewProgram(s, opts...).Start(); err != nil {
 		return err
 	}
 	return result
@@ -67,10 +59,7 @@ type model struct {
 	statusCh <-chan string
 	detailCh <-chan string
 
-	ctx context.Context
-
-	cancel   context.CancelFunc
-	canceled bool
+	interrupt bool
 
 	doneCh <-chan any
 }
@@ -102,9 +91,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			m.cancel()
-			m.canceled = true
-			return m, nil
+			m.interrupt = true
+			return m, tea.Quit
 		default:
 			return m, nil
 		}
@@ -122,7 +110,7 @@ func (m model) View() string {
 	default:
 	}
 
-	if m.canceled {
+	if m.interrupt {
 		return fmt.Sprintf("%s %s\n", m.m.View(), "Stoppping on interrupt")
 	}
 

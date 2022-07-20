@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"log"
 	"time"
@@ -16,7 +15,7 @@ func main() {
 	s.Spinner = bspinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
-	if err := spinner.Run(s, func(ctx context.Context, msg spinner.Messager) error {
+	if err := spinner.Run(s, func(msg spinner.Messager) error {
 		jobs := []struct {
 			name     string
 			detail   string
@@ -24,7 +23,7 @@ func main() {
 			err      error
 		}{
 			{
-				name: "Eat",
+				name: "Eatting",
 				detail: `- Milk
 - Egg
 - Corn`,
@@ -43,7 +42,7 @@ func main() {
 				duration: time.Second,
 			},
 			{
-				name:     "Play",
+				name:     "Playing",
 				detail:   "Play some Dota",
 				duration: 3 * time.Second,
 				err:      errors.New("overheating"),
@@ -51,9 +50,6 @@ func main() {
 		}
 
 		for _, job := range jobs {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
 			msg.SetDetail(job.detail)
 			msg.SetStatus(job.name)
 			time.Sleep(job.duration)
