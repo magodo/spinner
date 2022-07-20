@@ -8,37 +8,50 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-type Logger chan string
-
-func (m Logger) Print(v ...any) {
-	m <- fmt.Sprint(v...)
-}
-func (m Logger) Printf(format string, v ...any) {
-	m <- fmt.Sprintf(format, v...)
-}
-func (m Logger) Println(v ...any) {
-	m <- fmt.Sprintln(v...)
+type Messager struct {
+	detailCh chan string
+	statusCh chan string
 }
 
-// UserFunc executes with spinner running. Each call on Print functions on the logger updates the message that the spinner shows.
-// Users are expected to periodically check the context to see whether it is terminated, which might due to one of the following reasons:
+func (m *Messager) SetStatus(v string) {
+	m.statusCh <- v
+}
+func (m *Messager) SetDetail(v string) {
+	m.detailCh <- v
+}
+
+// UserFunc executes with spinner running. Users are expected to periodically check the context to see whether it is terminated, which might due to one of the following reasons:
 // - Context deadline execeeded (if any)
 // - User pressed "Ctrl-C" to interrupt
-// - Calling Fatal-like functions on the logger
-type UserFunc func(ctx context.Context, logger Logger) error
+type UserFunc func(ctx context.Context, msg Messager) error
 
 func Run(sp spinner.Model, f UserFunc) error {
 	ctx, cancel := context.WithCancel(context.Background())
-	logger := make(chan string)
+
+	statusCh := make(chan string, 1)
+	detailCh := make(chan string, 1)
+	msg := Messager{
+		statusCh: statusCh,
+		detailCh: detailCh,
+	}
+
 	doneCh := make(chan any)
 	var result error
 	go func() {
-		result = f(ctx, logger)
+		result = f(ctx, msg)
 		cancel()
-		close(logger)
+		close(statusCh)
+		close(detailCh)
 		close(doneCh)
 	}()
-	s := model{m: sp, mch: logger, ctx: ctx, cancel: cancel, doneCh: doneCh}
+	s := model{
+		m:        sp,
+		statusCh: statusCh,
+		detailCh: detailCh,
+		ctx:      ctx,
+		cancel:   cancel,
+		doneCh:   doneCh,
+	}
 	if err := tea.NewProgram(s).Start(); err != nil {
 		return err
 	}
@@ -46,15 +59,17 @@ func Run(sp spinner.Model, f UserFunc) error {
 }
 
 type model struct {
-	m   spinner.Model
-	msg string
-	mch <-chan string
+	m spinner.Model
+
+	detail string
+	status string
+
+	statusCh <-chan string
+	detailCh <-chan string
 
 	ctx context.Context
 
-	// cancel is used to cancel the ctx of the invoked function, to notify the invoked function that it is interrupted
-	cancel context.CancelFunc
-
+	cancel   context.CancelFunc
 	canceled bool
 
 	doneCh <-chan any
@@ -72,8 +87,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	select {
-	case message := <-m.mch:
-		m.msg = message
+	case v := <-m.statusCh:
+		m.status = v
+	default:
+	}
+
+	select {
+	case v := <-m.detailCh:
+		m.detail = v
 	default:
 	}
 
@@ -95,8 +116,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	select {
+	case <-m.doneCh:
+		return ""
+	default:
+	}
+
 	if m.canceled {
 		return fmt.Sprintf("%s %s\n", m.m.View(), "Stoppping on interrupt")
 	}
-	return fmt.Sprintf("%s %s\n", m.m.View(), m.msg)
+
+	output := fmt.Sprintf("%s %s\n", m.m.View(), m.status)
+	if m.detail != "" {
+		output += "\n" + m.detail
+	}
+	return output
 }
